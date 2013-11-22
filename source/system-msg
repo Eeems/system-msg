@@ -1,0 +1,286 @@
+#!/bin/bash
+# Change Directory to where the script is being run from
+cd $( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd );
+# Include the config file
+. $CONFPATH
+# Check if the cache directory exists, otherwise create it
+if [ -d "$CACHE" ]; then
+	if [ "`/bin/ls $CACHE`" == "" ];then
+		:
+	fi;
+else
+	mkdir -p $CACHE
+fi;
+# If the current user has no viewed file then create it with a timestamp of 0
+if [ ! -f ~/.system-msg-viewed ];then
+	echo 0 > ~/.system-msg-viewed;
+fi;
+# Get path to this script
+SCRIPT=$( pwd )/$(basename $0);
+# Get path to new message file if you want to create it
+MESSAGE_FILE="$CACHE/`date +%s` `who -m | awk '{print $1;}'`"
+_help(){
+	echo "Usage: system-msg [options]";
+	echo "	-s			show the current system messages";
+	echo "	-a <message>		add new message";
+	echo "	-f <path>		add new message from file contents";
+	echo "	-h			show this message";
+	echo "	-v			show the version number";
+	echo "	-r <number>		remove a message based on its number";
+	echo "	--all			Show all messages in the cache";
+	echo "	--stats			show stats about the system-msg installation";
+}
+_exit(){
+	exit 0;
+}
+_error(){
+	exit 1;
+}
+curpos(){
+	# based on a script from http://invisible-island.net/xterm/xterm.faq.html
+	exec < /dev/tty
+	oldstty=$(stty -g)
+	stty raw -echo min 0
+	# on my system, the following line can be replaced by the line below it
+	echo -en "\033[6n" > /dev/tty
+	# tput u7 > /dev/tty    # when TERM=xterm (and relatives)
+	IFS=';' read -r -d R -a pos
+	stty $oldstty
+	# change from one-based to zero based so they work with: tput cup $row $col
+	echo $((${pos[0]:2} - 1)) $((${pos[1]} - 1))
+}
+# <format string> <Messge string> [ <Date timestamp> [ <Author string> [ <file path> [ <post number> ] ] ]]
+format_parse() {
+	tput sgr0;
+	local i=0;
+	local l=$(echo ${#1});
+	while [[ $i -lt $l ]];do
+		c=${1:$i:1};
+		if [[ "$c" == "%" ]];then
+			i=$(($i+1));
+			c=${1:$i:1};
+			case "$c" in
+				A)
+					echo -n $4;
+				;;
+				D)
+					echo -n $(date -d @$3);
+				;;
+				M)
+					echo -en "$2";
+				;;
+				F)
+					echo -n $5;
+				;;
+				N)
+					echo -n $6;
+				;;
+				%)
+					echo -n %;
+				;;
+				d)
+					echo -n "$(date)";
+				;;
+				n)
+					echo -en "\n";
+				;;
+				r)
+					echo -en "\r";
+				;;
+				t)
+					echo -n -e "\t";
+				;;
+				l)
+					echo -n $LINE;
+				;;
+				c)
+					i=$(($i+1));
+					c=${1:$i:1};
+					while [[ $i -lt $l ]] && [[ "${1:$i:1}" != "m" ]]; do
+						i=$(($i+1));
+						c="$c${1:$i:1}";
+					done;
+					echo -n -e "\e[$c";
+				;;
+				b)
+					tput bold;
+				;;
+				o)
+					tput sgr0;
+				;;
+				p)
+					i=$(($i+1));
+					c=${1:$i:1};
+					case "$c" in
+						c) tput clear;;
+						u) tput cuu1;;
+						d) tput cud1;;
+						e)
+							tput cup $(curpos | cut -d' ' -f1) $(tput cols);
+						;;
+						s)
+							tput cup $(curpos | cut -d' ' -f1) 0;
+						;;
+						m)
+							local m=$(tput cols);
+							m=$(($m/2));
+							tput cup $(curpos | cut -d' ' -f1) $m;
+						;;
+						l)
+							i=$(($i+1));
+							c="";
+							while [[ $i -lt $l ]] && [[ "${1:$i:1}" != "m" ]]; do
+								c="$c${1:$i:1}";
+								i=$(($i+1));
+							done;
+							local m="$(curpos | cut -d' ' -f2)";
+							m=$(($m-$c));
+							tput cup $(curpos | cut -d' ' -f1) $m;
+						;;
+						r)
+							i=$(($i+1));
+							c="";
+							while [[ $i -lt $l ]] && [[ "${1:$i:1}" != "m" ]]; do
+								c="$c${1:$i:1}";
+								i=$(($i+1));
+							done;
+							local m="$(curpos | cut -d' ' -f2)";
+							m=$(($m+$c));
+							tput cup $(curpos | cut -d' ' -f1) $m;
+						;;
+					esac;
+				;;
+			esac;
+		else
+			echo -n "$c";
+		fi;
+		i=$(($i+1));
+	done;
+	echo;
+}
+
+
+_disp_header(){
+	format_parse "$HEADER" " " "`ls -rt $CACHE | tail -n 1 | awk '{print$1}'`"
+}
+show_messages(){
+	LINE=`line`
+	HEADER_DISPLAYED=0;
+	if [ "`ls $CACHE`" != "" ];then
+		if [[ $MESSAGES_TO_DISPLAY != -1 ]];then
+			ls -rt $CACHE | nl | tail -n $MESSAGES_TO_DISPLAY | while read file; do
+				if [ $HEADER_DISPLAYED == 0 ];then
+					_disp_header;
+					HEADER_DISPLAYED=1;
+				fi;
+				number=`echo $file | cut -d' ' -f1`;
+				file=`echo $file | awk '{print $2,$3}'`;
+				format_parse "$FORMAT" "`cat "$CACHE/$file"`" "`echo $file | cut -d' ' -f1`" "`echo $file | cut -d' ' -f2`" "$CACHE/$file" "$number"
+			done;
+		else
+			ls -rt $CACHE | nl | while read file; do
+				number=`echo $file | cut -d' ' -f1`;
+				file=`echo $file | awk '{print $2,$3}'`;
+				if [ `echo $file | cut -d' ' -f1` \> `cat ~/.system-msg-viewed` ];then
+					if [ $HEADER_DISPLAYED == 0 ];then
+						_disp_header;
+						HEADER_DISPLAYED=1;
+					fi;
+					format_parse "$FORMAT" "`cat "$CACHE/$file"`" "`echo $file | cut -d' ' -f1`" "`echo $file | cut -d' ' -f2`" "$CACHE/$file" "$number"
+				fi;
+			done;
+		fi;
+	else
+		format_parse "$NO_MESSAGES" " "
+	fi;
+	echo `date +%s` > ~/.system-msg-viewed;
+}
+if [ "$1" != "" ];then
+	if [ "$1" == "--stats" ];then
+		if [ $MESSAGES_TO_DISPLAY == -1 ];then
+			MESSAGES_TO_DISPLAY="new"
+		fi;
+		echo -e "Stats:\n\tCache: $CACHE\n\tMessages in Cache: `ls -1 $CACHE | wc -l`\n\tNumber of messages to display: $MESSAGES_TO_DISPLAY";
+		echo -e "Formats:\n\tMessage: $FORMAT\n\tHeader: $HEADER\n\tNo Messages: $NO_MESSAGES";
+	else
+		if [ "$1" == "--all"  ];then
+			LINE=`line`
+			HEADER_DISPLAYED=0;
+			ls -rt $CACHE | nl | while read file; do
+				if [ $HEADER_DISPLAYED == 0 ];then
+					_disp_header;
+					HEADER_DISPLAYED=1;
+				fi;
+				number=`echo $file | cut -d' ' -f1`;
+				file=`echo $file | awk '{print $2,$3}'`;
+				format_parse "$FORMAT" "`cat "$CACHE/$file"`" "`echo $file | cut -d' ' -f1`" "`echo $file | cut -d' ' -f2`" "$CACHE/$file" "$number"
+			done;
+		else
+			while getopts "hvcsr:a:f:" optname; do
+				case "$optname" in
+					s)
+						show_messages;
+						_exit;
+					;;
+					f)
+						if [[ $EUID -ne 0 ]]; then
+							sudo $SCRIPT $@;
+						else
+							cp $OPTARG "$MESSAGE_FILE";
+						fi;
+					;;
+					a)
+						if [[ $EUID -ne 0 ]]; then
+							sudo $SCRIPT $@;
+						else
+							echo -en "$OPTARG" > "$MESSAGE_FILE";
+						fi;
+					;;
+					c)
+						if [[ $EUID -ne 0 ]]; then
+							sudo $SCRIPT $@;
+						else
+							echo -n "Are you sure you want to clear the cache? (y/N): ";
+							read c;
+							if [ "$c" == "y" ];then
+								echo "Clearing cache";
+								rm -fv $CACHE/*;
+								echo "Cache cleared";
+							fi;
+							_exit;
+						fi;
+					;;
+					r)
+						if [ "" != "`ls -rt $CACHE | awk "NR==$OPTARG"`" ] && [ -e "$CACHE/`ls -rt $CACHE | awk "NR==$OPTARG"`" ];then
+							echo -n "Are you sure you want to delete message $OPTARG (y/N): ";
+							read c;
+							if [ "$c" == "y" ];then
+								rm -fv "$CACHE/`ls -rt $CACHE | awk "NR==$OPTARG"`";
+							fi;
+						else
+							echo "Message $OPTARG doesn't exist";
+						fi;
+						_exit;
+					;;
+					h)
+						_help;
+						_exit;
+					;;
+					v)
+						echo -e "Version: $VERSION\nBuild Date: $BUILDDATE";
+						_exit;
+					;;
+					:)	# Generic error if an arguement is missing
+						echo "Option -$OPTARG requires an arguement.";
+					;;
+					\?)	# What to do if an invalid arguement is passed
+						_help;
+						_error;
+					;;
+				esac;
+			done;
+		fi;
+	fi;
+else
+	show_messages;
+fi;

@@ -1,0 +1,9 @@
+#!/bin/bash
+LINE=
+TEMP=-
+ii=$((`tput cols` << 1))
+while [ $((ii >>= 1)) != 0 ]; do
+	[ $((ii & 1)) != 0 ] && LINE=$LINE$TEMP
+	TEMP=$TEMP$TEMP
+done
+echo $LINE;
