@@ -17,5 +17,6 @@ install:
 	@cp source/line /usr/bin/line;
 	@chmod +x /usr/bin/line;
 	@cp source/system-msg.conf /etc/system-msg.conf;
+	@mkdir -p /var/cache/system-msg;
 clean:
 	@rm -rf build;
